@@ -2,7 +2,7 @@
 
 `decent` is an early alpha federated hosting tool for static sites.
 
-Current version: `v0.0.1`
+Current version: `v0.0.2`
 
 ## Install
 
@@ -35,3 +35,5 @@ decent --help
 ## Docs
 
 See [docs.md](/Users/jason/Code/decent/docs.md) for the protocol, architecture, setup flow, and current limits.
+
+If you want the roadmap and the more experimental ideas, see [Things You Could Build.md](/Users/jason/Code/decent/Things%20You%20Could%20Build.md).

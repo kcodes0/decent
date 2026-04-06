@@ -121,13 +121,26 @@ func (a *App) initCmd() error {
 	if err != nil {
 		return err
 	}
-	masterSite, err := a.promptString("What public URL should visitors use for the main site", "http://127.0.0.1:8080")
+	masterSite, err := a.promptHTTPBaseURL(
+		"What public URL should visitors use for the main site",
+		"http://127.0.0.1:8080",
+		"https://kcodes.me",
+		"https://example.com",
+	)
 	if err != nil {
 		return err
 	}
-	masterAPI, err := a.promptString("What URL should worker nodes use to reach the main API", "http://127.0.0.1:8080")
+	masterAPI, err := a.promptHTTPBaseURL(
+		"What URL should worker nodes use to reach the main API",
+		"http://127.0.0.1:8080",
+		"https://api.example.com",
+		"https://api.example.com/decent",
+	)
 	if err != nil {
 		return err
+	}
+	if apiPathPrefix(masterAPI) {
+		_, _ = fmt.Fprintf(a.stdout, "You chose an API URL with a path prefix.\nMake sure your reverse proxy forwards %s/api/* to the daemon's /api/* routes.\n", strings.TrimRight(masterAPI, "/"))
 	}
 
 	if repoName == "" {
@@ -460,6 +473,25 @@ func (a *App) promptString(label, def string) (string, error) {
 	return line, nil
 }
 
+func (a *App) promptHTTPBaseURL(label, def string, examples ...string) (string, error) {
+	fullLabel := label
+	if len(examples) > 0 {
+		fullLabel = fmt.Sprintf("%s\nExamples: %s", label, strings.Join(examples, " or "))
+	}
+
+	for {
+		value, err := a.promptString(fullLabel, def)
+		if err != nil {
+			return "", err
+		}
+		normalized, err := normalizeHTTPBaseURL(value)
+		if err == nil {
+			return normalized, nil
+		}
+		_, _ = fmt.Fprintf(a.stdout, "Please enter a full http:// or https:// URL. %v\n", err)
+	}
+}
+
 func (a *App) promptInt(label string, def int) (int, error) {
 	value, err := a.promptString(label, strconv.Itoa(def))
 	if err != nil {
@@ -738,4 +770,40 @@ func mustLocalConfigPath() string {
 		return "~/.config/decent/node.toml"
 	}
 	return path
+}
+
+func normalizeHTTPBaseURL(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", fmt.Errorf("the URL cannot be empty")
+	}
+
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", fmt.Errorf("that URL could not be parsed")
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return "", fmt.Errorf("the URL must start with http:// or https://")
+	}
+	if u.Host == "" {
+		return "", fmt.Errorf("the URL needs a hostname")
+	}
+	if u.RawQuery != "" || u.Fragment != "" {
+		return "", fmt.Errorf("leave off query strings and fragments")
+	}
+
+	u.Path = strings.TrimRight(u.EscapedPath(), "/")
+	if u.Path == "" {
+		u.Path = ""
+	}
+	return u.String(), nil
+}
+
+func apiPathPrefix(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	path := strings.TrimSpace(strings.Trim(u.Path, "/"))
+	return path != ""
 }

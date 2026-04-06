@@ -1,7 +1,7 @@
 # decent docs
 
 `decent` is an early alpha federated hosting tool for static sites. This build is
-version `v0.0.1`.
+version `v0.0.2`.
 
 The short version:
 
@@ -231,7 +231,7 @@ Returns the current routing choice for a request.
 
 `decent` currently uses redirect-based routing instead of GeoDNS.
 
-That choice is deliberate for `v0.0.1`:
+That choice is deliberate for `v0.0.2`:
 
 - it is much easier to self-host
 - it works without third-party CDN services
@@ -285,4 +285,4 @@ It does not yet cover:
 
 ## Release
 
-Current release: `v0.0.1`
+Current release: `v0.0.2`

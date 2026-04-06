@@ -107,6 +107,58 @@ func TestInitCmdWritesManifestAndCommits(t *testing.T) {
 	}
 }
 
+func TestInitCmdRepromptsForInvalidSiteURLAndSupportsPrefixedAPI(t *testing.T) {
+	home := t.TempDir()
+	repoDir := filepath.Join(t.TempDir(), "site")
+	if err := os.MkdirAll(repoDir, 0o755); err != nil {
+		t.Fatalf("mkdir repo: %v", err)
+	}
+	testutil.MustRun(t, repoDir, "git", "init", "-b", "main")
+	testutil.ConfigureGitUser(t, repoDir)
+	testutil.MustWriteFile(t, filepath.Join(repoDir, "index.html"), "<h1>hello</h1>")
+
+	fakeBin := filepath.Join(t.TempDir(), "bin")
+	if err := os.MkdirAll(fakeBin, 0o755); err != nil {
+		t.Fatalf("mkdir fake bin: %v", err)
+	}
+	testutil.MakeExecutable(t, filepath.Join(fakeBin, "gh"), "#!/bin/sh\nif [ \"$1\" = \"auth\" ] && [ \"$2\" = \"status\" ]; then exit 0; fi\nexit 0\n")
+
+	t.Setenv("HOME", home)
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	app, stdout := newTestApp(t, repoDir, strings.Join([]string{
+		"my-site",
+		"kcodes0/my-site",
+		"us-west",
+		"kcodes.me",
+		"https://kcodes.me",
+		"https://api.kcodes.me/decent",
+		"n",
+	}, "\n")+"\n")
+
+	if err := app.initCmd(); err != nil {
+		t.Fatalf("initCmd: %v", err)
+	}
+
+	manifest, err := config.ReadManifest(repoDir)
+	if err != nil {
+		t.Fatalf("ReadManifest: %v", err)
+	}
+	if manifest.Master.SiteBaseURL != "https://kcodes.me" {
+		t.Fatalf("expected corrected site URL, got %q", manifest.Master.SiteBaseURL)
+	}
+	if manifest.Master.APIBaseURL != "https://api.kcodes.me/decent" {
+		t.Fatalf("expected path-prefixed API URL, got %q", manifest.Master.APIBaseURL)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "Please enter a full http:// or https:// URL") {
+		t.Fatalf("expected invalid URL guidance, got %s", out)
+	}
+	if !strings.Contains(out, "forwards https://api.kcodes.me/decent/api/*") {
+		t.Fatalf("expected path-prefix guidance, got %s", out)
+	}
+}
+
 func TestHostCmdClonesRepoAndStartsDaemon(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
