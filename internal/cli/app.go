@@ -20,6 +20,7 @@ import (
 	"github.com/kcodes0/decent/internal/content"
 	"github.com/kcodes0/decent/internal/protocol"
 	"github.com/kcodes0/decent/internal/system"
+	"github.com/kcodes0/decent/internal/version"
 )
 
 type App struct {
@@ -62,6 +63,9 @@ func (a *App) run(args []string) error {
 		return a.statusCmd()
 	case "push":
 		return a.pushCmd()
+	case "version", "--version", "-v":
+		_, err := fmt.Fprintln(a.stdout, version.Current)
+		return err
 	case "help", "-h", "--help":
 		return a.usage()
 	default:
@@ -70,14 +74,23 @@ func (a *App) run(args []string) error {
 }
 
 func (a *App) usage() error {
-	_, err := fmt.Fprintln(a.stdout, `decent - federated static hosting
+	_, err := fmt.Fprintf(a.stdout, `decent %s
 
 Usage:
   decent init
   decent setup
   decent host <repo>
   decent status
-  decent push`)
+  decent push
+  decent version
+
+What these do:
+  init     Set up the current repo as the main site.
+  setup    Set up this machine as a worker node.
+  host     Clone a site, verify it, and start hosting it here.
+  status   Show local node details and network health.
+  push     Refresh the site hash, update the manifest, and push it.
+`, version.Current)
 	return err
 }
 
@@ -85,6 +98,7 @@ func (a *App) initCmd() error {
 	if err := requireCommands("git", "gh"); err != nil {
 		return err
 	}
+	_, _ = fmt.Fprintln(a.stdout, "Let's set up this repo as your main decent site.")
 
 	repoRoot, err := a.ensureRepoRoot()
 	if err != nil {
@@ -95,7 +109,7 @@ func (a *App) initCmd() error {
 	}
 
 	defaultRepo := a.detectRemote(repoRoot)
-	siteName, err := a.promptString("Site name", filepath.Base(repoRoot))
+	siteName, err := a.promptString("What should this site be called", filepath.Base(repoRoot))
 	if err != nil {
 		return err
 	}
@@ -103,26 +117,26 @@ func (a *App) initCmd() error {
 	if err != nil {
 		return err
 	}
-	region, err := a.promptString("Master region tag", "local")
+	region, err := a.promptString("Where is the main node located? Use a short region label", "local")
 	if err != nil {
 		return err
 	}
-	masterSite, err := a.promptString("Master site URL", "http://127.0.0.1:8080")
+	masterSite, err := a.promptString("What public URL should visitors use for the main site", "http://127.0.0.1:8080")
 	if err != nil {
 		return err
 	}
-	masterAPI, err := a.promptString("Master API base URL", "http://127.0.0.1:8080")
+	masterAPI, err := a.promptString("What URL should worker nodes use to reach the main API", "http://127.0.0.1:8080")
 	if err != nil {
 		return err
 	}
 
 	if repoName == "" {
-		createRepo, err := a.promptBool("Create a GitHub repo with gh", true)
+		createRepo, err := a.promptBool("I don't see a GitHub repo yet. Do you want me to create one with gh", true)
 		if err != nil {
 			return err
 		}
 		if createRepo {
-			repoName, err = a.promptString("GitHub repo name", siteName)
+			repoName, err = a.promptString("What should the GitHub repo be named", siteName)
 			if err != nil {
 				return err
 			}
@@ -184,7 +198,7 @@ func (a *App) initCmd() error {
 	if err := runAttached(repoRoot, "git", "add", config.ManifestFileName); err == nil {
 		added = true
 	}
-	commitNow, err := a.promptBool("Commit manifest now", true)
+	commitNow, err := a.promptBool("Do you want me to commit decent.toml now", true)
 	if err != nil {
 		return err
 	}
@@ -199,11 +213,12 @@ func (a *App) initCmd() error {
 		}
 	}
 
-	_, _ = fmt.Fprintf(a.stdout, "Wrote %s and local config.\nRun `decent-node --config %s` on the master to serve and route traffic.\n", filepath.Join(repoRoot, config.ManifestFileName), mustLocalConfigPath())
+	_, _ = fmt.Fprintf(a.stdout, "Your main site is ready.\nI wrote %s and saved local settings to %s.\nNext, start the main node with `decent-node --config %s`.\n", filepath.Join(repoRoot, config.ManifestFileName), mustLocalConfigPath(), mustLocalConfigPath())
 	return nil
 }
 
 func (a *App) setupCmd() error {
+	_, _ = fmt.Fprintln(a.stdout, "Let's set up this machine as a worker node.")
 	cfg := defaultConfig("worker")
 	if existing, err := config.ReadLocalConfig(); err == nil && existing != nil {
 		cfg = existing
@@ -211,43 +226,43 @@ func (a *App) setupCmd() error {
 
 	var err error
 	cfg.Role = "worker"
-	cfg.Region, err = a.promptString("Region/location tag", cfg.Region)
+	cfg.Region, err = a.promptString("Where is this machine located? Use a short region label", cfg.Region)
 	if err != nil {
 		return err
 	}
-	cfg.PublicHost, err = a.promptString("Public host to bind/advertise", cfg.PublicHost)
+	cfg.PublicHost, err = a.promptString("What hostname or IP should this node listen on", cfg.PublicHost)
 	if err != nil {
 		return err
 	}
-	cfg.PublicPort, err = a.promptInt("Public port", cfg.PublicPort)
+	cfg.PublicPort, err = a.promptInt("Which port should serve the public site", cfg.PublicPort)
 	if err != nil {
 		return err
 	}
-	cfg.AdminPort, err = a.promptInt("Admin port", cfg.AdminPort)
+	cfg.AdminPort, err = a.promptInt("Which port should be used for the local admin API", cfg.AdminPort)
 	if err != nil {
 		return err
 	}
-	cfg.MasterAPI, err = a.promptString("Master API base URL", cfg.MasterAPI)
+	cfg.MasterAPI, err = a.promptString("What URL should this worker use for the main node API", cfg.MasterAPI)
 	if err != nil {
 		return err
 	}
-	cfg.MasterSite, err = a.promptString("Master site URL", cfg.MasterSite)
+	cfg.MasterSite, err = a.promptString("What is the public URL of the main site", cfg.MasterSite)
 	if err != nil {
 		return err
 	}
-	cfg.MaxBandwidthMbps, err = a.promptInt("Bandwidth budget Mbps", cfg.MaxBandwidthMbps)
+	cfg.MaxBandwidthMbps, err = a.promptInt("How much outbound bandwidth can this node offer in Mbps", cfg.MaxBandwidthMbps)
 	if err != nil {
 		return err
 	}
-	cfg.MaxStorageMB, err = a.promptInt("Storage budget MB", cfg.MaxStorageMB)
+	cfg.MaxStorageMB, err = a.promptInt("How much disk space can this node offer in MB", cfg.MaxStorageMB)
 	if err != nil {
 		return err
 	}
-	syncSeconds, err := a.promptInt("Sync interval seconds", int(cfg.SyncInterval/time.Second))
+	syncSeconds, err := a.promptInt("How often should this node check for repo updates, in seconds", int(cfg.SyncInterval/time.Second))
 	if err != nil {
 		return err
 	}
-	heartbeatSeconds, err := a.promptInt("Heartbeat interval seconds", int(cfg.HeartbeatInterval/time.Second))
+	heartbeatSeconds, err := a.promptInt("How often should this node report health to the main node, in seconds", int(cfg.HeartbeatInterval/time.Second))
 	if err != nil {
 		return err
 	}
@@ -257,7 +272,7 @@ func (a *App) setupCmd() error {
 	if err := config.WriteLocalConfig(cfg); err != nil {
 		return err
 	}
-	_, _ = fmt.Fprintf(a.stdout, "Saved worker config to %s\n", mustLocalConfigPath())
+	_, _ = fmt.Fprintf(a.stdout, "Worker setup is saved at %s.\nWhen you're ready, run `decent host <repo>` to start hosting a site here.\n", mustLocalConfigPath())
 	return nil
 }
 
@@ -265,6 +280,7 @@ func (a *App) hostCmd(repoArg string) error {
 	if err := requireCommands("git"); err != nil {
 		return err
 	}
+	_, _ = fmt.Fprintf(a.stdout, "Getting %s ready on this machine.\n", repoArg)
 
 	cfg := defaultConfig("worker")
 	if existing, err := config.ReadLocalConfig(); err == nil && existing != nil {
@@ -315,7 +331,7 @@ func (a *App) hostCmd(repoArg string) error {
 		return err
 	}
 
-	_, _ = fmt.Fprintf(a.stdout, "Worker hosting %s from %s\n", manifest.SiteName, cloneDir)
+	_, _ = fmt.Fprintf(a.stdout, "This machine is now hosting %s.\nFiles live at %s.\n", manifest.SiteName, cloneDir)
 	return nil
 }
 
@@ -325,7 +341,7 @@ func (a *App) statusCmd() error {
 		return err
 	}
 	if cfg == nil {
-		return fmt.Errorf("no local config found, run `decent init` or `decent setup` first")
+		return fmt.Errorf("I couldn't find local decent settings yet. Run `decent init` or `decent setup` first")
 	}
 
 	_, _ = fmt.Fprintf(a.stdout, "Local node: %s (%s)\n", cfg.NodeID, cfg.Role)
@@ -397,7 +413,7 @@ func (a *App) pushCmd() error {
 			return err
 		}
 	}
-	_, _ = fmt.Fprintf(a.stdout, "Updated %s and pushed the repo\n", config.ManifestFileName)
+	_, _ = fmt.Fprintln(a.stdout, "The site manifest is updated and the latest changes were pushed.")
 	return nil
 }
 
@@ -406,7 +422,7 @@ func (a *App) ensureRepoRoot() (string, error) {
 	if err == nil {
 		return root, nil
 	}
-	initRepo, promptErr := a.promptBool("Current directory is not a git repo. Run `git init` here", true)
+	initRepo, promptErr := a.promptBool("This folder is not a git repo yet. Do you want me to run `git init` here", true)
 	if promptErr != nil {
 		return "", promptErr
 	}
@@ -524,7 +540,7 @@ func (a *App) startDaemonDetached() error {
 	}
 	_ = cmd.Process.Release()
 	_ = logFile.Close()
-	_, _ = fmt.Fprintf(a.stdout, "Started decent-node (pid %d). Logs: %s\n", cmd.Process.Pid, logPath)
+	_, _ = fmt.Fprintf(a.stdout, "Started decent-node in the background.\nPID: %d\nLogs: %s\n", cmd.Process.Pid, logPath)
 	return nil
 }
 

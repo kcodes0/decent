@@ -1,53 +1,37 @@
 # decent
 
-`decent` is a federated static-site hosting prototype.
+`decent` is an early alpha federated hosting tool for static sites.
 
-One machine acts as the master node. It owns the git repo, publishes a `decent.toml`
-manifest, tracks healthy worker nodes, and serves as the fallback origin.
+Current version: `v0.0.1`
 
-Volunteer worker nodes clone the repo, verify the checked-out files against the
-manifest content hash, self-correct if local files diverge, serve the static site,
-and heartbeat back to the master.
+## Install
 
-## Binaries
+```sh
+curl -fsSL https://raw.githubusercontent.com/kcodes0/decent/main/install.sh | sh
+```
 
-- `decent`: CLI for master and worker setup
-- `decent-node`: long-running daemon for either `master` or `worker` mode
+Then verify it:
 
-## Protocol
+```sh
+decent version
+decent --help
+```
 
-The current protocol is HTTP + TOML:
+## What it does
 
-- `POST /api/register`
-  Worker registration payload with region, capacity, URLs, and current content hash.
-- `POST /api/heartbeat`
-  Worker health report with uptime, latency, and content hash.
-- `GET /api/status`
-  Master registry snapshot, manifest, and healthy node list.
-- `GET /api/route`
-  Routing decision for a visitor region hint.
+- the main node owns the git repo and serves as the fallback origin
+- worker nodes clone the repo, verify it, serve it, and report health
+- visitors get redirected to a healthy nearby worker when one is available
+- the main node serves the site directly when no worker is a good fit
 
-The master routes normal site traffic by HTTP redirect. If no healthy worker is a
-better fit, the master serves the site directly from its own filesystem.
+## Quick start
 
-## Happy Path
+1. In your site repo, run `decent init`.
+2. Start the main daemon with `decent-node --config ~/.config/decent/node.toml`.
+3. On a worker machine, run `decent setup`.
+4. On that worker machine, run `decent host <repo>`.
+5. When you publish updates, run `decent push` from the main repo.
 
-1. On the master repo, run `decent init`.
-2. Start the master daemon with `decent-node --config ~/.config/decent/node.toml`.
-3. On a worker, run `decent setup`.
-4. On that worker, run `decent host github:user/repo`.
-5. Publish updates from the master repo with `decent push`.
+## Docs
 
-## Current Routing Choice
-
-The prototype uses the hybrid-friendly redirect layer first, not GeoDNS.
-
-That keeps the implementation self-hostable and simple:
-
-- the master always has a local fallback
-- workers can join without DNS control
-- GeoDNS can be added later behind the same registry and selection logic
-
-Region matching currently uses explicit region tags and request hints, which is good
-enough for the cooperative-network prototype. A production upgrade path would be to
-add a local GeoIP database to the master router.
+See [docs.md](/Users/jason/Code/decent/docs.md) for the protocol, architecture, setup flow, and current limits.
