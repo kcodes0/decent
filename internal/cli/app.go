@@ -54,6 +54,8 @@ func (a *App) run(args []string) error {
 		return a.initCmd()
 	case "setup":
 		return a.setupCmd()
+	case "check":
+		return a.checkCmd()
 	case "host":
 		if len(args) < 2 {
 			return fmt.Errorf("usage: decent host <repo>")
@@ -79,6 +81,7 @@ func (a *App) usage() error {
 Usage:
   decent init
   decent setup
+  decent check
   decent host <repo>
   decent status
   decent push
@@ -87,6 +90,7 @@ Usage:
 What these do:
   init     Set up the current repo as the main site.
   setup    Set up this machine as a worker node.
+  check    Validate local config, URLs, daemon health, and API wiring.
   host     Clone a site, verify it, and start hosting it here.
   status   Show local node details and network health.
   push     Refresh the site hash, update the manifest, and push it.
@@ -255,13 +259,26 @@ func (a *App) setupCmd() error {
 	if err != nil {
 		return err
 	}
-	cfg.MasterAPI, err = a.promptString("What URL should this worker use for the main node API", cfg.MasterAPI)
+	cfg.MasterAPI, err = a.promptHTTPBaseURL(
+		"What URL should this worker use for the main node API",
+		cfg.MasterAPI,
+		"https://api.example.com",
+		"https://api.example.com/decent",
+	)
 	if err != nil {
 		return err
 	}
-	cfg.MasterSite, err = a.promptString("What is the public URL of the main site", cfg.MasterSite)
+	cfg.MasterSite, err = a.promptHTTPBaseURL(
+		"What is the public URL of the main site",
+		cfg.MasterSite,
+		"https://kcodes.me",
+		"https://example.com",
+	)
 	if err != nil {
 		return err
+	}
+	if apiPathPrefix(cfg.MasterAPI) {
+		_, _ = fmt.Fprintf(a.stdout, "This worker will use an API URL with a path prefix.\nMake sure your reverse proxy forwards %s/api/* to the daemon's /api/* routes.\n", strings.TrimRight(cfg.MasterAPI, "/"))
 	}
 	cfg.MaxBandwidthMbps, err = a.promptInt("How much outbound bandwidth can this node offer in Mbps", cfg.MaxBandwidthMbps)
 	if err != nil {
@@ -345,6 +362,76 @@ func (a *App) hostCmd(repoArg string) error {
 	}
 
 	_, _ = fmt.Fprintf(a.stdout, "This machine is now hosting %s.\nFiles live at %s.\n", manifest.SiteName, cloneDir)
+	return nil
+}
+
+func (a *App) checkCmd() error {
+	cfg, err := config.ReadLocalConfig()
+	if err != nil {
+		return err
+	}
+	if cfg == nil {
+		return fmt.Errorf("I couldn't find local decent settings yet. Run `decent init` or `decent setup` first")
+	}
+
+	_, _ = fmt.Fprintf(a.stdout, "Running decent checks for %s (%s).\n", cfg.NodeID, cfg.Role)
+	var failures int
+
+	checks := []checkResult{
+		checkValue("node role", cfg.Role == "master" || cfg.Role == "worker", fmt.Sprintf("role is %q", cfg.Role), "role must be 'master' or 'worker'"),
+		checkValue("region label", strings.TrimSpace(cfg.Region) != "", cfg.Region, "region is empty"),
+		checkURL("main site URL", cfg.MasterSite),
+		checkURL("main API URL", cfg.MasterAPI),
+	}
+
+	if apiPathPrefix(cfg.MasterAPI) {
+		checks = append(checks, checkResult{
+			Level:   "warn",
+			Name:    "API path prefix",
+			Details: fmt.Sprintf("%s uses a path prefix. Your proxy must forward %s/api/* to /api/* on the daemon.", cfg.MasterAPI, strings.TrimRight(cfg.MasterAPI, "/")),
+		})
+	}
+
+	if cfg.RepoDir != "" {
+		if manifest, err := config.ReadManifest(cfg.RepoDir); err == nil {
+			checks = append(checks,
+				checkValue("manifest found", true, filepath.Join(cfg.RepoDir, config.ManifestFileName), ""),
+				checkURL("manifest main site URL", manifest.Master.SiteBaseURL),
+				checkURL("manifest main API URL", manifest.Master.APIBaseURL),
+				checkValue("config/manifest site URL match", strings.TrimRight(cfg.MasterSite, "/") == strings.TrimRight(manifest.Master.SiteBaseURL, "/"), "config and manifest agree", fmt.Sprintf("config has %s but manifest has %s", cfg.MasterSite, manifest.Master.SiteBaseURL)),
+				checkValue("config/manifest API URL match", strings.TrimRight(cfg.MasterAPI, "/") == strings.TrimRight(manifest.Master.APIBaseURL, "/"), "config and manifest agree", fmt.Sprintf("config has %s but manifest has %s", cfg.MasterAPI, manifest.Master.APIBaseURL)),
+			)
+		} else {
+			checks = append(checks, checkResult{
+				Level:   "fail",
+				Name:    "manifest found",
+				Details: err.Error(),
+			})
+		}
+	}
+
+	localURL, localPath := localCheckEndpoint(cfg)
+	if localURL != "" {
+		checks = append(checks, probeHTTP("local daemon", localURL, localPath))
+	}
+	if cfg.MasterAPI != "" {
+		checks = append(checks, probeHTTP("main API", strings.TrimRight(cfg.MasterAPI, "/"), "/api/status"))
+	}
+	if cfg.MasterSite != "" {
+		checks = append(checks, probeHTTP("main site", strings.TrimRight(cfg.MasterSite, "/"), "/"))
+	}
+
+	for _, check := range checks {
+		_, _ = fmt.Fprintf(a.stdout, "[%s] %s: %s\n", strings.ToUpper(check.Level), check.Name, check.Details)
+		if check.Level == "fail" {
+			failures++
+		}
+	}
+
+	if failures > 0 {
+		return fmt.Errorf("decent check found %d failing check(s)", failures)
+	}
+	_, _ = fmt.Fprintln(a.stdout, "All required checks passed.")
 	return nil
 }
 
@@ -770,6 +857,64 @@ func mustLocalConfigPath() string {
 		return "~/.config/decent/node.toml"
 	}
 	return path
+}
+
+type checkResult struct {
+	Level   string
+	Name    string
+	Details string
+}
+
+func checkValue(name string, ok bool, success string, failure string) checkResult {
+	if ok {
+		return checkResult{Level: "pass", Name: name, Details: success}
+	}
+	return checkResult{Level: "fail", Name: name, Details: failure}
+}
+
+func checkURL(name string, raw string) checkResult {
+	normalized, err := normalizeHTTPBaseURL(raw)
+	if err != nil {
+		return checkResult{Level: "fail", Name: name, Details: err.Error()}
+	}
+	return checkResult{Level: "pass", Name: name, Details: normalized}
+}
+
+func localCheckEndpoint(cfg *protocol.LocalConfig) (string, string) {
+	if cfg == nil {
+		return "", ""
+	}
+	host := cfg.PublicHost
+	if host == "" || host == "0.0.0.0" {
+		host = "127.0.0.1"
+	}
+	if strings.HasPrefix(host, "http://") || strings.HasPrefix(host, "https://") {
+		if cfg.Role == "master" {
+			return strings.TrimRight(host, "/"), "/api/status"
+		}
+		return strings.TrimRight(host, "/"), "/status"
+	}
+	base := fmt.Sprintf("http://%s:%d", host, cfg.AdminPort)
+	if cfg.Role == "master" {
+		return base, "/api/status"
+	}
+	return base, "/status"
+}
+
+func probeHTTP(name string, baseURL string, path string) checkResult {
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Get(strings.TrimRight(baseURL, "/") + path)
+	if err != nil {
+		return checkResult{Level: "fail", Name: name, Details: err.Error()}
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return checkResult{Level: "pass", Name: name, Details: fmt.Sprintf("%s%s returned %s", strings.TrimRight(baseURL, "/"), path, resp.Status)}
+	}
+	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		return checkResult{Level: "warn", Name: name, Details: fmt.Sprintf("%s%s returned %s", strings.TrimRight(baseURL, "/"), path, resp.Status)}
+	}
+	return checkResult{Level: "fail", Name: name, Details: fmt.Sprintf("%s%s returned %s", strings.TrimRight(baseURL, "/"), path, resp.Status)}
 }
 
 func normalizeHTTPBaseURL(raw string) (string, error) {

@@ -272,6 +272,101 @@ func TestStatusCmdPrintsLocalAndNetworkStatus(t *testing.T) {
 	}
 }
 
+func TestCheckCmdPassesForHealthyLocalSetup(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	adminServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/status":
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer adminServer.Close()
+
+	masterServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/status", "/":
+			_ = json.NewEncoder(w).Encode(protocol.StatusResponse{})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer masterServer.Close()
+
+	adminURL, err := url.Parse(adminServer.URL)
+	if err != nil {
+		t.Fatalf("parse admin URL: %v", err)
+	}
+	adminPort, err := strconv.Atoi(adminURL.Port())
+	if err != nil {
+		t.Fatalf("parse admin port: %v", err)
+	}
+
+	repoDir := t.TempDir()
+	manifest := &protocol.Manifest{
+		Version: "v0",
+		Master: protocol.MasterNode{
+			APIBaseURL:  masterServer.URL,
+			SiteBaseURL: masterServer.URL,
+		},
+	}
+	if err := config.WriteManifest(repoDir, manifest); err != nil {
+		t.Fatalf("WriteManifest: %v", err)
+	}
+
+	cfg := &protocol.LocalConfig{
+		NodeID:     "worker-1",
+		Role:       "worker",
+		Region:     "us-west",
+		RepoDir:    repoDir,
+		PublicHost: adminURL.Hostname(),
+		AdminPort:  adminPort,
+		MasterAPI:  masterServer.URL,
+		MasterSite: masterServer.URL,
+	}
+	if err := config.WriteLocalConfig(cfg); err != nil {
+		t.Fatalf("WriteLocalConfig: %v", err)
+	}
+
+	app, stdout := newTestApp(t, home, "")
+	if err := app.checkCmd(); err != nil {
+		t.Fatalf("checkCmd: %v\n%s", err, stdout.String())
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "[PASS] local daemon") || !strings.Contains(out, "All required checks passed.") {
+		t.Fatalf("unexpected output: %s", out)
+	}
+}
+
+func TestCheckCmdFailsForBadURLs(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	cfg := &protocol.LocalConfig{
+		NodeID:     "master",
+		Role:       "master",
+		Region:     "us-west",
+		MasterAPI:  "api.kcodes.me/decent",
+		MasterSite: "kcodes.me",
+	}
+	if err := config.WriteLocalConfig(cfg); err != nil {
+		t.Fatalf("WriteLocalConfig: %v", err)
+	}
+
+	app, stdout := newTestApp(t, home, "")
+	err := app.checkCmd()
+	if err == nil {
+		t.Fatalf("expected checkCmd to fail")
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "[FAIL] main site URL") || !strings.Contains(out, "[FAIL] main API URL") {
+		t.Fatalf("unexpected output: %s", out)
+	}
+}
+
 func TestPushCmdUpdatesManifestCommitsAndPushes(t *testing.T) {
 	masterServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(protocol.StatusResponse{

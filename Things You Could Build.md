@@ -8,6 +8,14 @@ for serving static sites from many independently run nodes.
 
 ## Practical things to build soon
 
+Implemented in `v0.0.3`
+
+### ~~Operator checks~~
+
+~~A built-in operator check tool that validates local config, manifest values,
+daemon reachability, main API reachability, and common reverse-proxy mistakes
+before a node joins the network.~~
+
 ### 1. A real dashboard
 
 The protocol already has enough structure for a decent control panel.

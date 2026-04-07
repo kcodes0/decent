@@ -2,7 +2,7 @@
 
 `decent` is an early alpha federated hosting tool for static sites.
 
-Current version: `v0.0.2`
+Current version: `v0.0.3`
 
 ## Install
 
@@ -27,10 +27,11 @@ decent --help
 ## Quick start
 
 1. In your site repo, run `decent init`.
-2. Start the main daemon with `decent-node --config ~/.config/decent/node.toml`.
-3. On a worker machine, run `decent setup`.
-4. On that worker machine, run `decent host <repo>`.
-5. When you publish updates, run `decent push` from the main repo.
+2. Run `decent check` to catch config and routing mistakes early.
+3. Start the main daemon with `decent-node --config ~/.config/decent/node.toml`.
+4. On a worker machine, run `decent setup`.
+5. On that worker machine, run `decent host <repo>`.
+6. When you publish updates, run `decent push` from the main repo.
 
 ## Docs
 

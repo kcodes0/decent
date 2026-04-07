@@ -1,7 +1,7 @@
 # decent docs
 
 `decent` is an early alpha federated hosting tool for static sites. This build is
-version `v0.0.2`.
+version `v0.0.3`.
 
 The short version:
 
@@ -48,6 +48,7 @@ After that, check the install:
 ```sh
 decent version
 decent --help
+decent check
 ```
 
 ## Main concepts
@@ -144,6 +145,21 @@ It walks you through:
 
 Then it writes the local worker config.
 
+### `decent check`
+
+Run this after `init` or `setup`.
+
+It checks:
+
+- whether your local config exists
+- whether your saved site and API URLs are valid full URLs
+- whether your manifest and local config agree
+- whether the local daemon is reachable
+- whether the main API responds
+- whether your setup depends on an API path prefix such as `/decent`
+
+If something is wrong, `decent check` exits nonzero and tells you what failed.
+
 ### `decent host <repo>`
 
 Run this on a worker machine after setup.
@@ -231,7 +247,7 @@ Returns the current routing choice for a request.
 
 `decent` currently uses redirect-based routing instead of GeoDNS.
 
-That choice is deliberate for `v0.0.2`:
+That choice is deliberate for `v0.0.3`:
 
 - it is much easier to self-host
 - it works without third-party CDN services
@@ -252,15 +268,17 @@ The selector currently uses:
 
 1. Put your static site in a git repo.
 2. Run `decent init`.
-3. Start `decent-node`.
-4. When you update the site, run `decent push`.
+3. Run `decent check`.
+4. Start `decent-node`.
+5. When you update the site, run `decent push`.
 
 ### Worker flow
 
 1. Install `decent`.
 2. Run `decent setup`.
-3. Run `decent host <repo>`.
-4. Leave `decent-node` running.
+3. Run `decent check`.
+4. Run `decent host <repo>`.
+5. Leave `decent-node` running.
 
 ## Current limits
 
@@ -285,4 +303,4 @@ It does not yet cover:
 
 ## Release
 
-Current release: `v0.0.2`
+Current release: `v0.0.3`
